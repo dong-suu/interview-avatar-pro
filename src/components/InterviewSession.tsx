@@ -63,6 +63,7 @@ const InterviewSession = () => {
       // Generate final evaluation
       setIsLoading(true);
       try {
+        console.log('Sending answers for evaluation:', answers);
         const { data, error } = await supabase.functions.invoke('interview-agent', {
           body: {
             role,
@@ -71,10 +72,20 @@ const InterviewSession = () => {
           }
         });
 
-        if (error) throw error;
+        if (error) {
+          console.error('Supabase function error:', error);
+          throw error;
+        }
+        
+        console.log('Final evaluation data:', data);
         setFinalEvaluation(data);
       } catch (error) {
         console.error('Error generating final evaluation:', error);
+        toast({
+          title: "Error",
+          description: "Failed to generate final evaluation. Please try again.",
+          variant: "destructive",
+        });
       } finally {
         setIsLoading(false);
       }
@@ -105,15 +116,21 @@ const InterviewSession = () => {
     e.preventDefault();
     if (!answer.trim()) return;
 
-    // Store answer without immediate feedback
-    setAnswers(prev => [...prev, {
+    // Store answer
+    const newAnswers = [...answers, {
       question: currentQuestion,
-      answer: answer,
-    }]);
-    
+      answer: answer.trim(),
+    }];
+    setAnswers(newAnswers);
     setAnswer("");
     
-    // Start countdown for next question
+    // If this was the 10th question, trigger final evaluation
+    if (questionCount === 10) {
+      await generateQuestion(); // This will trigger final evaluation
+      return;
+    }
+    
+    // Otherwise, start countdown for next question
     let count = 5;
     setCountdown(count);
     
@@ -129,7 +146,6 @@ const InterviewSession = () => {
     }, 1000);
   };
 
-  // Generate first question when component mounts
   useEffect(() => {
     generateQuestion();
   }, []);

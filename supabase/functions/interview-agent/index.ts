@@ -2,7 +2,6 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { GoogleGenerativeAI } from "https://esm.sh/@google/generative-ai@0.1.3";
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -15,7 +14,7 @@ serve(async (req) => {
   }
 
   try {
-    const { role, currentQuestion, userAnswer, mode, resumeText } = await req.json();
+    const { role, mode, answers, resumeText } = await req.json();
     const genAI = new GoogleGenerativeAI(Deno.env.get('GEMINI_API_KEY')!);
     const model = genAI.getGenerativeModel({ model: "gemini-pro" });
 
@@ -39,50 +38,39 @@ serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     } 
-    
-    if (mode === 'evaluate_answer') {
-      const prompt = `As an expert technical interviewer for a ${role} position, evaluate this candidate's answer to the question: "${currentQuestion}"
-      
-      Candidate's answer: "${userAnswer}"
-      
-      Provide feedback in this JSON format:
-      {
-        "score": (number between 1-10),
-        "feedback": "brief constructive feedback",
-        "nextQuestion": "a follow-up question based on their answer"
-      }`;
-      
-      const result = await model.generateContent(prompt);
-      const response = result.response.text();
-      
-      return new Response(response, {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
 
     if (mode === 'final_evaluation') {
-      const { answers } = await req.json();
-      const prompt = `As an expert technical interviewer for a ${role} position, evaluate these 10 answers:
-      ${answers.map((a: any, i: number) => `
-      Q${i + 1}: ${a.question}
-      A${i + 1}: ${a.answer}
-      Score: ${a.score}
-      `).join('\n')}
+      console.log('Generating final evaluation for answers:', answers);
       
-      Provide a final evaluation in this JSON format:
-      {
-        "finalScore": (number between 1-10),
-        "overallFeedback": "comprehensive feedback about the candidate's performance",
-        "strengths": ["list", "of", "strengths"],
-        "areasOfImprovement": ["list", "of", "areas", "to", "improve"]
-      }`;
-      
+      const answersText = answers.map((a: any, i: number) => 
+        `Q${i + 1}: ${a.question}\nA${i + 1}: ${a.answer}`
+      ).join('\n\n');
+
+      const prompt = `As an expert technical interviewer for a ${role} position, evaluate these interview answers:
+
+${answersText}
+
+Provide a comprehensive evaluation in this JSON format (maintain the exact structure):
+{
+  "finalScore": <number between 1-10>,
+  "overallFeedback": "<detailed feedback about overall performance>",
+  "strengths": ["<strength1>", "<strength2>", "<strength3>"],
+  "areasOfImprovement": ["<area1>", "<area2>", "<area3>"]
+}`;
+
       const result = await model.generateContent(prompt);
       const response = result.response.text();
       
-      return new Response(response, {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      try {
+        const parsedResponse = JSON.parse(response.trim());
+        return new Response(JSON.stringify(parsedResponse), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      } catch (parseError) {
+        console.error('Error parsing AI response:', parseError);
+        console.log('Raw AI response:', response);
+        throw new Error('Failed to parse evaluation response');
+      }
     }
 
     return new Response(JSON.stringify({ error: 'Invalid mode' }), {
