@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -9,8 +8,6 @@ import { useToast } from "@/hooks/use-toast";
 interface Answer {
   question: string;
   answer: string;
-  score: number;
-  feedback: string;
 }
 
 const InterviewSession = () => {
@@ -19,16 +16,14 @@ const InterviewSession = () => {
   const [currentQuestion, setCurrentQuestion] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isListening, setIsListening] = useState(false);
-  const [feedback, setFeedback] = useState<{
-    score: number;
-    feedback: string;
-  } | null>(null);
-  const [resumeText, setResumeText] = useState<string | null>(null);
   const [questionCount, setQuestionCount] = useState(0);
   const [answers, setAnswers] = useState<Answer[]>([]);
   const [finalEvaluation, setFinalEvaluation] = useState<any>(null);
+  const [countdown, setCountdown] = useState<number | null>(null);
   
   const recognition = useRef<any>(null);
+  const role = sessionStorage.getItem('interviewRole') || "Software Engineer";
+  const resumeText = sessionStorage.getItem('resumeText') || null;
 
   useEffect(() => {
     if ('webkitSpeechRecognition' in window) {
@@ -63,45 +58,14 @@ const InterviewSession = () => {
     }
   };
 
-  const handleResumeUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (file.type !== 'application/pdf') {
-      toast({
-        title: "Invalid file type",
-        description: "Please upload a PDF file",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    try {
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        const text = e.target?.result as string;
-        setResumeText(text);
-        generateQuestion();
-      };
-      reader.readAsText(file);
-    } catch (error) {
-      console.error('Error reading PDF:', error);
-      toast({
-        title: "Error",
-        description: "Failed to process the resume. Please try again.",
-        variant: "destructive",
-      });
-    }
-  };
-
   const generateQuestion = async () => {
-    if (questionCount >= 10 && answers.length >= 10) {
+    if (questionCount >= 10) {
       // Generate final evaluation
       setIsLoading(true);
       try {
         const { data, error } = await supabase.functions.invoke('interview-agent', {
           body: {
-            role: "Software Engineer",
+            role,
             mode: "final_evaluation",
             answers
           }
@@ -121,7 +85,7 @@ const InterviewSession = () => {
     try {
       const { data, error } = await supabase.functions.invoke('interview-agent', {
         body: {
-          role: "Software Engineer",
+          role,
           mode: "generate_question",
           resumeText
         }
@@ -129,7 +93,6 @@ const InterviewSession = () => {
 
       if (error) throw error;
       setCurrentQuestion(data.question);
-      setFeedback(null);
       setQuestionCount(prev => prev + 1);
     } catch (error) {
       console.error('Error generating question:', error);
@@ -142,43 +105,28 @@ const InterviewSession = () => {
     e.preventDefault();
     if (!answer.trim()) return;
 
-    setIsLoading(true);
-    try {
-      const { data, error } = await supabase.functions.invoke('interview-agent', {
-        body: {
-          role: "Software Engineer",
-          currentQuestion,
-          userAnswer: answer,
-          mode: "evaluate_answer"
-        }
-      });
-
-      if (error) throw error;
+    // Store answer without immediate feedback
+    setAnswers(prev => [...prev, {
+      question: currentQuestion,
+      answer: answer,
+    }]);
+    
+    setAnswer("");
+    
+    // Start countdown for next question
+    let count = 5;
+    setCountdown(count);
+    
+    const timer = setInterval(() => {
+      count -= 1;
+      setCountdown(count);
       
-      const newFeedback = {
-        score: data.score,
-        feedback: data.feedback
-      };
-      
-      setFeedback(newFeedback);
-      setAnswers(prev => [...prev, {
-        question: currentQuestion,
-        answer: answer,
-        score: data.score,
-        feedback: data.feedback
-      }]);
-      
-      // After a delay, show the next question
-      setTimeout(() => {
-        setAnswer("");
+      if (count === 0) {
+        clearInterval(timer);
+        setCountdown(null);
         generateQuestion();
-      }, 5000);
-
-    } catch (error) {
-      console.error('Error evaluating answer:', error);
-    } finally {
-      setIsLoading(false);
-    }
+      }
+    }, 1000);
   };
 
   // Generate first question when component mounts
@@ -188,31 +136,6 @@ const InterviewSession = () => {
 
   return (
     <div className="min-h-screen flex flex-col bg-interview-background">
-      {/* Resume Upload Section */}
-      {questionCount === 0 && (
-        <div className="p-4 flex justify-center">
-          <Card className="p-6 w-full max-w-md">
-            <h3 className="text-lg font-medium mb-4">Upload Resume (Optional)</h3>
-            <div className="flex items-center gap-4">
-              <input
-                type="file"
-                accept=".pdf"
-                onChange={handleResumeUpload}
-                className="hidden"
-                id="resume-upload"
-              />
-              <label
-                htmlFor="resume-upload"
-                className="flex items-center gap-2 cursor-pointer bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600"
-              >
-                <Upload className="h-4 w-4" />
-                Choose PDF
-              </label>
-            </div>
-          </Card>
-        </div>
-      )}
-
       {/* Avatar Section */}
       <div className="flex-1 flex items-center justify-center p-4">
         <div className="w-32 h-32 bg-interview-accent rounded-full animate-float shadow-lg" />
@@ -263,10 +186,9 @@ const InterviewSession = () => {
                 <p className="text-lg">
                   {currentQuestion}
                 </p>
-                {feedback && (
-                  <div className="p-4 bg-gray-50 rounded-lg space-y-2">
-                    <div className="font-medium">Score: {feedback.score}/10</div>
-                    <p className="text-gray-600">{feedback.feedback}</p>
+                {countdown !== null && (
+                  <div className="text-center p-4 bg-gray-50 rounded-lg">
+                    <p className="text-lg font-medium">Next question in {countdown}s...</p>
                   </div>
                 )}
               </div>
@@ -293,7 +215,7 @@ const InterviewSession = () => {
                 <Button
                   type="submit"
                   className="bg-interview-accent hover:bg-opacity-90 flex-shrink-0"
-                  disabled={isLoading || !answer.trim()}
+                  disabled={isLoading || !answer.trim() || countdown !== null}
                 >
                   <Send className="h-4 w-4" />
                 </Button>
