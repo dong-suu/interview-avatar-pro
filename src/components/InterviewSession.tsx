@@ -1,11 +1,12 @@
-
 import { useState, useEffect, useRef } from "react";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Mic, Send, VolumeX, Volume2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useConversation } from "@11labs/react";
+import { InterviewAvatar } from "./interview/InterviewAvatar";
+import { AudioControls } from "./interview/AudioControls";
+import { AnswerInput } from "./interview/AnswerInput";
+import { FinalEvaluation } from "./interview/FinalEvaluation";
 
 interface Answer {
   question: string;
@@ -33,17 +34,22 @@ const InterviewSession = () => {
   const conversation = useConversation({
     overrides: {
       tts: {
-        voiceId: "Sarah", // Using Sarah's voice for the interviewer
+        voiceId: "Sarah",
+        model: "eleven_monolingual_v1",
+        voice_settings: {
+          stability: 0.5,
+          similarity_boost: 0.75,
+        },
       },
     },
   });
 
-  // Initialize speech recognition
   useEffect(() => {
     if ('webkitSpeechRecognition' in window) {
       recognition.current = new (window as any).webkitSpeechRecognition();
       recognition.current.continuous = true;
       recognition.current.interimResults = true;
+      recognition.current.lang = 'en-US';
 
       recognition.current.onresult = (event: any) => {
         const transcript = Array.from(event.results)
@@ -52,11 +58,12 @@ const InterviewSession = () => {
         setAnswer(transcript);
       };
 
-      recognition.current.onerror = () => {
+      recognition.current.onerror = (event: any) => {
+        console.error('Speech recognition error:', event.error);
         setIsListening(false);
         toast({
           title: "Error",
-          description: "Failed to recognize speech. Please try again.",
+          description: `Speech recognition error: ${event.error}`,
           variant: "destructive",
         });
       };
@@ -66,6 +73,12 @@ const InterviewSession = () => {
           recognition.current.start();
         }
       };
+    } else {
+      toast({
+        title: "Warning",
+        description: "Speech recognition is not supported in this browser. Please use Chrome.",
+        variant: "destructive",
+      });
     }
   }, []);
 
@@ -74,8 +87,17 @@ const InterviewSession = () => {
       recognition.current?.stop();
       setIsListening(false);
     } else {
-      recognition.current?.start();
-      setIsListening(true);
+      try {
+        recognition.current?.start();
+        setIsListening(true);
+      } catch (error) {
+        console.error('Speech recognition start error:', error);
+        toast({
+          title: "Error",
+          description: "Failed to start speech recognition. Please try again.",
+          variant: "destructive",
+        });
+      }
     }
   };
 
@@ -84,10 +106,12 @@ const InterviewSession = () => {
     
     setIsSpeaking(true);
     try {
+      await conversation.startConversation({
+        agentId: "sarah_interviewer",
+      });
       await conversation.setVolume({ volume: 1.0 });
-      // Use ElevenLabs to speak the text
-      // The text will be automatically converted to speech
-      await new Promise((resolve) => setTimeout(resolve, 500)); // Small pause for natural feel
+      await conversation.sendMessage({ text });
+      await new Promise((resolve) => setTimeout(resolve, 500));
     } catch (error) {
       console.error('Speech error:', error);
       toast({
@@ -102,7 +126,6 @@ const InterviewSession = () => {
 
   const generateQuestion = async () => {
     if (questionCount >= 10) {
-      // Generate final evaluation
       setIsLoading(true);
       try {
         const { data, error } = await supabase.functions.invoke('interview-agent', {
@@ -116,7 +139,6 @@ const InterviewSession = () => {
         if (error) throw error;
         
         setFinalEvaluation(data);
-        // Speak the final evaluation
         const summaryText = `Thank you for completing the interview. ${data.overallFeedback}`;
         await speakText(summaryText);
       } catch (error) {
@@ -149,7 +171,6 @@ const InterviewSession = () => {
       setQuestionContext(data.context || "");
       setQuestionCount(prev => prev + 1);
 
-      // Speak the new question
       const textToSpeak = data.context 
         ? `${data.context} ${data.question}`
         : data.question;
@@ -170,7 +191,6 @@ const InterviewSession = () => {
     e.preventDefault();
     if (!answer.trim()) return;
 
-    // Store answer and reset input
     const newAnswers = [...answers, {
       question: currentQuestion,
       answer: answer.trim(),
@@ -178,19 +198,16 @@ const InterviewSession = () => {
     setAnswers(newAnswers);
     setAnswer("");
     
-    // Stop listening when submitting
     if (isListening) {
       recognition.current?.stop();
       setIsListening(false);
     }
     
-    // If this was the 10th question, trigger final evaluation
     if (questionCount === 10) {
-      await generateQuestion(); // This will trigger final evaluation
+      await generateQuestion();
       return;
     }
     
-    // Otherwise, start countdown for next question
     let count = 5;
     setCountdown(count);
     
@@ -206,28 +223,20 @@ const InterviewSession = () => {
     }, 1000);
   };
 
-  // Start interview when component mounts
   useEffect(() => {
     generateQuestion();
     return () => {
       if (isListening) {
         recognition.current?.stop();
       }
+      conversation.endSession();
     };
   }, []);
 
   return (
     <div className="min-h-screen flex flex-col bg-interview-background">
-      {/* Avatar Section */}
-      <div className="flex-1 flex items-center justify-center p-4">
-        <div className="w-32 h-32 bg-interview-accent rounded-full animate-float shadow-lg relative">
-          {isSpeaking && (
-            <div className="absolute inset-0 border-4 border-blue-400 rounded-full animate-ping" />
-          )}
-        </div>
-      </div>
+      <InterviewAvatar isSpeaking={isSpeaking} />
 
-      {/* Interview Interface */}
       <div className="p-4 bg-interview-card shadow-lg">
         <Card className="p-6 space-y-4">
           {isLoading ? (
@@ -235,36 +244,7 @@ const InterviewSession = () => {
               Thinking...
             </div>
           ) : finalEvaluation ? (
-            <div className="space-y-4">
-              <h2 className="text-xl font-bold">Interview Feedback</h2>
-              <div className="p-4 bg-gray-50 rounded-lg space-y-4">
-                <div className="font-medium text-xl">Score: {finalEvaluation.finalScore}/10</div>
-                <div className="space-y-2">
-                  <p className="text-gray-600">{finalEvaluation.overallFeedback}</p>
-                </div>
-                <div className="space-y-2">
-                  <p className="font-medium">Your Strengths:</p>
-                  <ul className="list-disc pl-5">
-                    {finalEvaluation.strengths.map((strength: string, i: number) => (
-                      <li key={i} className="text-gray-600">{strength}</li>
-                    ))}
-                  </ul>
-                </div>
-                <div className="space-y-2">
-                  <p className="font-medium">Areas for Growth:</p>
-                  <ul className="list-disc pl-5">
-                    {finalEvaluation.areasOfImprovement.map((area: string, i: number) => (
-                      <li key={i} className="text-gray-600">{area}</li>
-                    ))}
-                  </ul>
-                </div>
-                {finalEvaluation.closingRemarks && (
-                  <div className="mt-4 text-gray-600 italic">
-                    {finalEvaluation.closingRemarks}
-                  </div>
-                )}
-              </div>
-            </div>
+            <FinalEvaluation evaluation={finalEvaluation} />
           ) : (
             <>
               <div className="space-y-4">
@@ -272,18 +252,10 @@ const InterviewSession = () => {
                   <p className="text-lg font-medium">
                     Question {questionCount}/10
                   </p>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setIsMuted(!isMuted)}
-                    className="ml-2"
-                  >
-                    {isMuted ? (
-                      <VolumeX className="h-4 w-4" />
-                    ) : (
-                      <Volume2 className="h-4 w-4" />
-                    )}
-                  </Button>
+                  <AudioControls 
+                    isMuted={isMuted}
+                    onToggleMute={() => setIsMuted(!isMuted)}
+                  />
                 </div>
                 {questionContext && (
                   <p className="text-gray-600 italic">
@@ -300,33 +272,15 @@ const InterviewSession = () => {
                 )}
               </div>
 
-              <form onSubmit={handleSubmit} className="flex gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className={`flex-shrink-0 ${isListening ? 'bg-red-100' : ''}`}
-                  onClick={toggleListening}
-                >
-                  <Mic className="h-4 w-4" />
-                </Button>
-                
-                <input
-                  type="text"
-                  value={answer}
-                  onChange={(e) => setAnswer(e.target.value)}
-                  className="flex-1 rounded-md border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-interview-accent"
-                  placeholder={isListening ? "Listening..." : "Type your answer..."}
-                />
-                
-                <Button
-                  type="submit"
-                  className="bg-interview-accent hover:bg-opacity-90 flex-shrink-0"
-                  disabled={isLoading || !answer.trim() || countdown !== null}
-                >
-                  <Send className="h-4 w-4" />
-                </Button>
-              </form>
+              <AnswerInput
+                answer={answer}
+                isListening={isListening}
+                isLoading={isLoading}
+                countdown={countdown}
+                onAnswerChange={setAnswer}
+                onToggleListening={toggleListening}
+                onSubmit={handleSubmit}
+              />
             </>
           )}
         </Card>
