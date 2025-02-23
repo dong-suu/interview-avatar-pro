@@ -14,6 +14,7 @@ const InterviewSession = () => {
   const { toast } = useToast();
   const [answer, setAnswer] = useState("");
   const [currentQuestion, setCurrentQuestion] = useState("");
+  const [questionContext, setQuestionContext] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [questionCount, setQuestionCount] = useState(0);
@@ -98,15 +99,22 @@ const InterviewSession = () => {
         body: {
           role,
           mode: "generate_question",
-          resumeText
+          resumeText,
+          previousAnswers: answers
         }
       });
 
       if (error) throw error;
       setCurrentQuestion(data.question);
+      setQuestionContext(data.context || "");
       setQuestionCount(prev => prev + 1);
     } catch (error) {
       console.error('Error generating question:', error);
+      toast({
+        title: "Error",
+        description: "Failed to generate question. Please try again.",
+        variant: "destructive",
+      });
     } finally {
       setIsLoading(false);
     }
@@ -166,15 +174,14 @@ const InterviewSession = () => {
             </div>
           ) : finalEvaluation ? (
             <div className="space-y-4">
-              <h2 className="text-xl font-bold">Final Evaluation</h2>
+              <h2 className="text-xl font-bold">Interview Feedback</h2>
               <div className="p-4 bg-gray-50 rounded-lg space-y-4">
-                <div className="font-medium text-xl">Final Score: {finalEvaluation.finalScore}/10</div>
+                <div className="font-medium text-xl">Score: {finalEvaluation.finalScore}/10</div>
                 <div className="space-y-2">
-                  <p className="font-medium">Overall Feedback:</p>
                   <p className="text-gray-600">{finalEvaluation.overallFeedback}</p>
                 </div>
                 <div className="space-y-2">
-                  <p className="font-medium">Strengths:</p>
+                  <p className="font-medium">Your Strengths:</p>
                   <ul className="list-disc pl-5">
                     {finalEvaluation.strengths.map((strength: string, i: number) => (
                       <li key={i} className="text-gray-600">{strength}</li>
@@ -182,13 +189,18 @@ const InterviewSession = () => {
                   </ul>
                 </div>
                 <div className="space-y-2">
-                  <p className="font-medium">Areas for Improvement:</p>
+                  <p className="font-medium">Areas for Growth:</p>
                   <ul className="list-disc pl-5">
                     {finalEvaluation.areasOfImprovement.map((area: string, i: number) => (
                       <li key={i} className="text-gray-600">{area}</li>
                     ))}
                   </ul>
                 </div>
+                {finalEvaluation.closingRemarks && (
+                  <div className="mt-4 text-gray-600 italic">
+                    {finalEvaluation.closingRemarks}
+                  </div>
+                )}
               </div>
             </div>
           ) : (
@@ -199,6 +211,11 @@ const InterviewSession = () => {
                     Question {questionCount}/10
                   </p>
                 </div>
+                {questionContext && (
+                  <p className="text-gray-600 italic">
+                    {questionContext}
+                  </p>
+                )}
                 <p className="text-lg">
                   {currentQuestion}
                 </p>
