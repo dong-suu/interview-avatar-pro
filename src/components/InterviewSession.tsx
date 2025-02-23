@@ -34,7 +34,7 @@ const InterviewSession = () => {
   const conversation = useConversation({
     overrides: {
       tts: {
-        voiceId: "Sarah",
+        voiceId: "EXAVITQu4vr4xnSDxMaL",
         model: "eleven_monolingual_v1",
         voice_settings: {
           stability: 0.5,
@@ -106,11 +106,10 @@ const InterviewSession = () => {
     
     setIsSpeaking(true);
     try {
-      await conversation.startConversation({
-        agentId: "sarah_interviewer",
-      });
       await conversation.setVolume({ volume: 1.0 });
-      await conversation.sendMessage({ text });
+      await conversation.startSession({
+        text,
+      });
       await new Promise((resolve) => setTimeout(resolve, 500));
     } catch (error) {
       console.error('Speech error:', error);
