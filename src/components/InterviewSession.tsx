@@ -1,9 +1,11 @@
+
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Mic, Send, Upload } from "lucide-react";
+import { Mic, Send, VolumeX, Volume2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { useConversation } from "@11labs/react";
 
 interface Answer {
   question: string;
@@ -17,25 +19,37 @@ const InterviewSession = () => {
   const [questionContext, setQuestionContext] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const [questionCount, setQuestionCount] = useState(0);
   const [answers, setAnswers] = useState<Answer[]>([]);
   const [finalEvaluation, setFinalEvaluation] = useState<any>(null);
   const [countdown, setCountdown] = useState<number | null>(null);
+  const [isMuted, setIsMuted] = useState(false);
   
   const recognition = useRef<any>(null);
   const role = sessionStorage.getItem('interviewRole') || "Software Engineer";
   const resumeText = sessionStorage.getItem('resumeText') || null;
 
+  const conversation = useConversation({
+    overrides: {
+      tts: {
+        voiceId: "Sarah", // Using Sarah's voice for the interviewer
+      },
+    },
+  });
+
+  // Initialize speech recognition
   useEffect(() => {
     if ('webkitSpeechRecognition' in window) {
       recognition.current = new (window as any).webkitSpeechRecognition();
-      recognition.current.continuous = false;
-      recognition.current.interimResults = false;
+      recognition.current.continuous = true;
+      recognition.current.interimResults = true;
 
       recognition.current.onresult = (event: any) => {
-        const transcript = event.results[0][0].transcript;
+        const transcript = Array.from(event.results)
+          .map((result: any) => result[0].transcript)
+          .join('');
         setAnswer(transcript);
-        setIsListening(false);
       };
 
       recognition.current.onerror = () => {
@@ -45,6 +59,12 @@ const InterviewSession = () => {
           description: "Failed to recognize speech. Please try again.",
           variant: "destructive",
         });
+      };
+
+      recognition.current.onend = () => {
+        if (isListening) {
+          recognition.current.start();
+        }
       };
     }
   }, []);
@@ -59,12 +79,32 @@ const InterviewSession = () => {
     }
   };
 
+  const speakText = async (text: string) => {
+    if (isMuted) return;
+    
+    setIsSpeaking(true);
+    try {
+      await conversation.setVolume({ volume: 1.0 });
+      // Use ElevenLabs to speak the text
+      // The text will be automatically converted to speech
+      await new Promise((resolve) => setTimeout(resolve, 500)); // Small pause for natural feel
+    } catch (error) {
+      console.error('Speech error:', error);
+      toast({
+        title: "Error",
+        description: "Failed to generate speech. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSpeaking(false);
+    }
+  };
+
   const generateQuestion = async () => {
     if (questionCount >= 10) {
       // Generate final evaluation
       setIsLoading(true);
       try {
-        console.log('Sending answers for evaluation:', answers);
         const { data, error } = await supabase.functions.invoke('interview-agent', {
           body: {
             role,
@@ -73,13 +113,12 @@ const InterviewSession = () => {
           }
         });
 
-        if (error) {
-          console.error('Supabase function error:', error);
-          throw error;
-        }
+        if (error) throw error;
         
-        console.log('Final evaluation data:', data);
         setFinalEvaluation(data);
+        // Speak the final evaluation
+        const summaryText = `Thank you for completing the interview. ${data.overallFeedback}`;
+        await speakText(summaryText);
       } catch (error) {
         console.error('Error generating final evaluation:', error);
         toast({
@@ -105,9 +144,16 @@ const InterviewSession = () => {
       });
 
       if (error) throw error;
+      
       setCurrentQuestion(data.question);
       setQuestionContext(data.context || "");
       setQuestionCount(prev => prev + 1);
+
+      // Speak the new question
+      const textToSpeak = data.context 
+        ? `${data.context} ${data.question}`
+        : data.question;
+      await speakText(textToSpeak);
     } catch (error) {
       console.error('Error generating question:', error);
       toast({
@@ -124,13 +170,19 @@ const InterviewSession = () => {
     e.preventDefault();
     if (!answer.trim()) return;
 
-    // Store answer
+    // Store answer and reset input
     const newAnswers = [...answers, {
       question: currentQuestion,
       answer: answer.trim(),
     }];
     setAnswers(newAnswers);
     setAnswer("");
+    
+    // Stop listening when submitting
+    if (isListening) {
+      recognition.current?.stop();
+      setIsListening(false);
+    }
     
     // If this was the 10th question, trigger final evaluation
     if (questionCount === 10) {
@@ -154,15 +206,25 @@ const InterviewSession = () => {
     }, 1000);
   };
 
+  // Start interview when component mounts
   useEffect(() => {
     generateQuestion();
+    return () => {
+      if (isListening) {
+        recognition.current?.stop();
+      }
+    };
   }, []);
 
   return (
     <div className="min-h-screen flex flex-col bg-interview-background">
       {/* Avatar Section */}
       <div className="flex-1 flex items-center justify-center p-4">
-        <div className="w-32 h-32 bg-interview-accent rounded-full animate-float shadow-lg" />
+        <div className="w-32 h-32 bg-interview-accent rounded-full animate-float shadow-lg relative">
+          {isSpeaking && (
+            <div className="absolute inset-0 border-4 border-blue-400 rounded-full animate-ping" />
+          )}
+        </div>
       </div>
 
       {/* Interview Interface */}
@@ -210,6 +272,18 @@ const InterviewSession = () => {
                   <p className="text-lg font-medium">
                     Question {questionCount}/10
                   </p>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setIsMuted(!isMuted)}
+                    className="ml-2"
+                  >
+                    {isMuted ? (
+                      <VolumeX className="h-4 w-4" />
+                    ) : (
+                      <Volume2 className="h-4 w-4" />
+                    )}
+                  </Button>
                 </div>
                 {questionContext && (
                   <p className="text-gray-600 italic">
@@ -242,7 +316,7 @@ const InterviewSession = () => {
                   value={answer}
                   onChange={(e) => setAnswer(e.target.value)}
                   className="flex-1 rounded-md border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-interview-accent"
-                  placeholder="Type your answer..."
+                  placeholder={isListening ? "Listening..." : "Type your answer..."}
                 />
                 
                 <Button
